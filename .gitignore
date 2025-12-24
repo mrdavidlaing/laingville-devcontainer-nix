@@ -1,0 +1,13 @@
+# Nix build artifacts
+result
+result-*
+*.drv
+
+# Editor directories
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+

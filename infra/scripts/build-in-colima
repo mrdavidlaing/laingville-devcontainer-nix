@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# Build aarch64-linux containers using Colima VM
+#
+# This script builds Nix container images inside the Colima VM (which runs aarch64-linux)
+# and loads them into Docker.
+#
+# Usage:
+#   build-in-colima                                    # Build and push laingville-devcontainer
+#   build-in-colima example-python-runtime             # Build and push specific package
+#   build-in-colima laingville-devcontainer local      # Build and push with custom tag
+#   build-in-colima --no-push                          # Build without pushing to Cachix
+#
+# Environment:
+#   COLIMA_INSTANCE  - Colima instance name (default: ntt-7842)
+#   CACHIX_NAME      - Cachix cache name (default: mrdavidlaing)
+#   CACHIX_AUTH_TOKEN - Override Cachix token (default: read from ~/.config/cachix/cachix.dhall)
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Parse --no-push flag (pushing is default)
+PUSH_TO_CACHIX=true
+if [ "${1:-}" = "--no-push" ]; then
+    PUSH_TO_CACHIX=false
+    shift
+fi
+
+# Configuration
+COLIMA_INSTANCE="${COLIMA_INSTANCE:-nix-builder}"
+PACKAGE="${1:-laingville-devcontainer}"
+TAG="${2:-latest}"
+CACHIX_NAME="${CACHIX_NAME:-mrdavidlaing}"
+
+# Get Cachix auth token from Mac's config if not set
+if [ -z "${CACHIX_AUTH_TOKEN:-}" ]; then
+    CACHIX_CONFIG="$HOME/.config/cachix/cachix.dhall"
+    if [ -f "$CACHIX_CONFIG" ]; then
+        # Extract authToken from dhall config (handles multi-line format)
+        CACHIX_AUTH_TOKEN=$(grep -A1 "authToken" "$CACHIX_CONFIG" | grep -o '"[^"]*"' | head -1 | tr -d '"')
+    fi
+fi
+
+# Get Cachix substituter config from Mac's nix.conf
+CACHIX_SUBSTITUTERS=""
+CACHIX_PUBLIC_KEYS=""
+for conf in "$HOME/.config/nix/nix.conf" "/etc/nix/nix.conf"; do
+    if [ -f "$conf" ]; then
+        if [ -z "$CACHIX_SUBSTITUTERS" ]; then
+            CACHIX_SUBSTITUTERS=$(grep "^substituters" "$conf" 2>/dev/null | head -1 | cut -d'=' -f2- | xargs)
+        fi
+        if [ -z "$CACHIX_PUBLIC_KEYS" ]; then
+            CACHIX_PUBLIC_KEYS=$(grep "^trusted-public-keys" "$conf" 2>/dev/null | head -1 | cut -d'=' -f2- | xargs)
+        fi
+    fi
+done
+
+echo "=============================================="
+echo "Building aarch64-linux container in Colima"
+echo "=============================================="
+echo ""
+echo "Package:  $PACKAGE"
+echo "Tag:      $TAG"
+echo "Instance: $COLIMA_INSTANCE"
+echo "Repo:     $REPO_ROOT"
+echo ""
+
+# Check if Colima instance is running
+if ! colima list 2>/dev/null | grep -q "$COLIMA_INSTANCE.*Running"; then
+    echo "❌ Colima instance '$COLIMA_INSTANCE' is not running."
+    echo ""
+    echo "Start it with:"
+    echo "  colima start $COLIMA_INSTANCE"
+    echo ""
+    echo "Or create a new one:"
+    echo "  colima start $COLIMA_INSTANCE --vm-type vz --arch aarch64 --cpu 4 --memory 8 --disk 60 --mount-type virtiofs"
+    exit 1
+fi
+
+# Write SSH config to temp file and use it
+SSH_CONFIG_FILE=$(mktemp)
+colima ssh-config "$COLIMA_INSTANCE" > "$SSH_CONFIG_FILE"
+trap "rm -f $SSH_CONFIG_FILE" EXIT
+
+echo "Building inside VM..."
+if [ -n "${CACHIX_AUTH_TOKEN:-}" ]; then
+    echo "Cachix:   $CACHIX_NAME (authenticated)"
+else
+    echo "Cachix:   $CACHIX_NAME (public access only)"
+fi
+if [ "$PUSH_TO_CACHIX" = "true" ]; then
+    echo "Push:     enabled"
+else
+    echo "Push:     disabled (use without --no-push to push)"
+fi
+echo ""
+
+# Build inside the VM using the SSH config
+# Note: The macOS filesystem is mounted at the same path inside the VM
+# Use quoted heredoc to prevent macOS expansion, pass vars explicitly
+ssh -F "$SSH_CONFIG_FILE" "colima-$COLIMA_INSTANCE" \
+    "CACHIX_NAME='$CACHIX_NAME'" \
+    "CACHIX_AUTH_TOKEN='${CACHIX_AUTH_TOKEN:-}'" \
+    "CACHIX_SUBSTITUTERS='${CACHIX_SUBSTITUTERS:-}'" \
+    "CACHIX_PUBLIC_KEYS='${CACHIX_PUBLIC_KEYS:-}'" \
+    "REPO_ROOT='$REPO_ROOT'" \
+    "PACKAGE='$PACKAGE'" \
+    bash << 'REMOTE_BUILD'
+set -e
+
+# Source Nix
+if [ -f ~/.nix-profile/etc/profile.d/nix.sh ]; then
+    . ~/.nix-profile/etc/profile.d/nix.sh
+else
+    echo "❌ Nix not found in VM."
+    echo "Install with: curl -L https://nixos.org/nix/install | sh -s -- --no-daemon"
+    exit 1
+fi
+
+# Configure Cachix substituter if not already configured
+NIX_CONF="$HOME/.config/nix/nix.conf"
+if [ -n "$CACHIX_NAME" ] && ! grep -q "$CACHIX_NAME.cachix.org" "$NIX_CONF" 2>/dev/null; then
+    echo "Configuring Cachix ($CACHIX_NAME)..."
+    mkdir -p "$(dirname "$NIX_CONF")"
+    
+    # Use substituters and keys from Mac's config
+    if [ -n "$CACHIX_SUBSTITUTERS" ] && [ -n "$CACHIX_PUBLIC_KEYS" ]; then
+        echo "substituters = $CACHIX_SUBSTITUTERS" >> "$NIX_CONF"
+        echo "trusted-public-keys = $CACHIX_PUBLIC_KEYS" >> "$NIX_CONF"
+        echo "Cachix configured from macOS nix.conf"
+    else
+        echo "Warning: No Cachix config found, using cache.nixos.org only"
+    fi
+fi
+
+# Set netrc for authenticated Cachix access
+if [ -n "$CACHIX_AUTH_TOKEN" ]; then
+    echo "machine $CACHIX_NAME.cachix.org password $CACHIX_AUTH_TOKEN" > ~/.netrc
+    chmod 600 ~/.netrc
+    
+    # Ensure nix.conf has netrc-file
+    if ! grep -q "netrc-file" "$NIX_CONF" 2>/dev/null; then
+        echo "netrc-file = $HOME/.netrc" >> "$NIX_CONF"
+    fi
+fi
+
+cd "$REPO_ROOT"
+
+echo "Running: nix build ./infra#packages.aarch64-linux.$PACKAGE"
+nix build "./infra#packages.aarch64-linux.$PACKAGE" --out-link /tmp/nix-build-result
+
+echo ""
+echo "Build complete:"
+ls -lh /tmp/nix-build-result
+REMOTE_BUILD
+
+# Push to Cachix if requested
+if [ "$PUSH_TO_CACHIX" = "true" ]; then
+    echo ""
+    echo "Pushing to Cachix ($CACHIX_NAME)..."
+    
+    ssh -F "$SSH_CONFIG_FILE" "colima-$COLIMA_INSTANCE" \
+        "CACHIX_NAME='$CACHIX_NAME'" \
+        "CACHIX_AUTH_TOKEN='${CACHIX_AUTH_TOKEN:-}'" \
+        bash << 'PUSH_CACHE'
+set -e
+. ~/.nix-profile/etc/profile.d/nix.sh
+
+# Install cachix if not present
+if ! command -v cachix &> /dev/null; then
+    echo "Installing cachix CLI..."
+    nix profile install nixpkgs#cachix
+fi
+
+# Configure cachix auth
+if [ -n "$CACHIX_AUTH_TOKEN" ]; then
+    export CACHIX_AUTH_TOKEN
+    
+    # Get the build result and all its runtime dependencies
+    BUILD_PATH=$(readlink -f /tmp/nix-build-result)
+    
+    echo "Pushing $BUILD_PATH and runtime closure to $CACHIX_NAME..."
+    
+    # Push the build result and its runtime closure
+    # Note: We push requisites (runtime deps) not references (build deps) 
+    # to avoid pushing the entire nixpkgs which is already on cache.nixos.org
+    nix-store --query --requisites "$BUILD_PATH" | cachix push "$CACHIX_NAME"
+    
+    echo ""
+    echo "Note: Standard nixpkgs dependencies are fetched from cache.nixos.org."
+    echo "      Your custom derivations are now cached in $CACHIX_NAME."
+    
+    echo "✅ Pushed to Cachix"
+else
+    echo "⚠️  No CACHIX_AUTH_TOKEN - skipping push"
+fi
+PUSH_CACHE
+fi
+
+echo ""
+echo "Loading container into Docker..."
+
+# Stream the tarball from VM to docker load
+# Use readlink to follow the symlink to the actual tarball
+# Capture the output to get the loaded image name
+LOAD_OUTPUT=$(ssh -F "$SSH_CONFIG_FILE" "colima-$COLIMA_INSTANCE" 'cat "$(readlink -f /tmp/nix-build-result)"' | docker load)
+echo "$LOAD_OUTPUT"
+
+# Parse the loaded image name from docker load output
+# Format: "Loaded image: ghcr.io/mrdavidlaing/laingville/example-python-runtime:latest"
+LOADED_IMAGE=$(echo "$LOAD_OUTPUT" | grep "Loaded image:" | sed 's/Loaded image: //')
+
+if [ -z "$LOADED_IMAGE" ]; then
+    echo "❌ Failed to parse loaded image name"
+    exit 1
+fi
+
+echo ""
+FINAL_TAG="ghcr.io/mrdavidlaing/laingville/${PACKAGE}:${TAG}"
+
+if [ "$LOADED_IMAGE" != "$FINAL_TAG" ]; then
+    echo "Tagging $LOADED_IMAGE as: $FINAL_TAG"
+    docker tag "$LOADED_IMAGE" "$FINAL_TAG"
+else
+    echo "Image already has correct tag: $FINAL_TAG"
+fi
+
+echo ""
+echo "=============================================="
+echo "✅ Build complete!"
+echo "=============================================="
+echo ""
+echo "Image: $FINAL_TAG"
+echo ""
+echo "To run:"
+echo "  docker run --rm -it $FINAL_TAG bash"
+echo ""
+echo "To use in devcontainer.json:"
+echo "  \"image\": \"$FINAL_TAG\""
+echo ""

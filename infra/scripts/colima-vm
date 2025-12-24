@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# Manage the Colima VM for Nix builds
+#
+# Usage:
+#   colima-vm create   # Create and configure VM with Nix
+#   colima-vm start    # Start existing VM
+#   colima-vm stop     # Stop VM (preserves data)
+#   colima-vm delete   # Delete VM completely
+#   colima-vm status   # Show VM status
+#   colima-vm ssh      # SSH into VM
+#
+# Environment:
+#   COLIMA_INSTANCE - Override instance name (default: nix-builder)
+#   COLIMA_CPU      - CPU cores (default: 4)
+#   COLIMA_MEMORY   - Memory in GB (default: 8)
+#   COLIMA_DISK     - Disk in GB (default: 60)
+
+set -euo pipefail
+
+INSTANCE="${COLIMA_INSTANCE:-nix-builder}"
+CPU="${COLIMA_CPU:-4}"
+MEMORY="${COLIMA_MEMORY:-8}"
+DISK="${COLIMA_DISK:-60}"
+
+usage() {
+    echo "Usage: colima-vm <command>"
+    echo ""
+    echo "Commands:"
+    echo "  create   Create and configure VM with Nix"
+    echo "  start    Start existing VM"
+    echo "  stop     Stop VM (preserves data)"
+    echo "  delete   Delete VM completely"
+    echo "  status   Show VM status"
+    echo "  ssh      SSH into VM"
+    echo ""
+    echo "Environment:"
+    echo "  COLIMA_INSTANCE=$INSTANCE"
+    echo "  COLIMA_CPU=$CPU"
+    echo "  COLIMA_MEMORY=$MEMORY"
+    echo "  COLIMA_DISK=$DISK"
+}
+
+create_vm() {
+    echo "Creating Colima VM: $INSTANCE"
+    echo "  CPU: $CPU cores"
+    echo "  Memory: ${MEMORY}GB"
+    echo "  Disk: ${DISK}GB"
+    echo ""
+
+    # Check if already exists
+    if colima list 2>/dev/null | grep -q "^$INSTANCE "; then
+        echo "❌ VM '$INSTANCE' already exists."
+        echo "   Use 'colima-vm delete' first, or 'colima-vm start' to start it."
+        exit 1
+    fi
+
+    # Create and start VM
+    colima start "$INSTANCE" \
+        --vm-type vz \
+        --arch aarch64 \
+        --cpu "$CPU" \
+        --memory "$MEMORY" \
+        --disk "$DISK" \
+        --mount-type virtiofs
+
+    echo ""
+    echo "Installing Nix in VM..."
+    
+    # Write SSH config to temp file
+    SSH_CONFIG=$(mktemp)
+    colima ssh-config "$INSTANCE" > "$SSH_CONFIG"
+    trap "rm -f $SSH_CONFIG" EXIT
+
+    # Install Nix
+    ssh -F "$SSH_CONFIG" "colima-$INSTANCE" bash << 'INSTALL_NIX'
+set -e
+
+# Install xz if needed (required for Nix installer)
+if ! command -v xz &> /dev/null; then
+    echo "Installing xz (required for Nix)..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq xz-utils
+fi
+
+echo "Downloading Nix installer..."
+curl -L https://nixos.org/nix/install -o /tmp/nix-install.sh
+
+echo "Installing Nix (single-user mode)..."
+sh /tmp/nix-install.sh --no-daemon
+
+echo "Configuring Nix for flakes..."
+mkdir -p ~/.config/nix
+echo "experimental-features = nix-command flakes" > ~/.config/nix/nix.conf
+
+echo ""
+echo "Verifying installation..."
+. ~/.nix-profile/etc/profile.d/nix.sh
+nix --version
+
+echo ""
+echo "✅ Nix installed successfully"
+INSTALL_NIX
+
+    echo ""
+    echo "=============================================="
+    echo "✅ VM '$INSTANCE' created and configured"
+    echo "=============================================="
+    echo ""
+    echo "Build containers with:"
+    echo "  ./infra/scripts/build-in-colima laingville-devcontainer local"
+    echo ""
+    echo "SSH into VM with:"
+    echo "  ./infra/scripts/colima-vm ssh"
+}
+
+start_vm() {
+    if ! colima list 2>/dev/null | grep -q "^$INSTANCE "; then
+        echo "❌ VM '$INSTANCE' does not exist."
+        echo "   Use 'colima-vm create' to create it."
+        exit 1
+    fi
+
+    if colima list 2>/dev/null | grep -q "$INSTANCE.*Running"; then
+        echo "VM '$INSTANCE' is already running."
+    else
+        echo "Starting VM '$INSTANCE'..."
+        colima start "$INSTANCE"
+        echo "✅ VM started"
+    fi
+}
+
+stop_vm() {
+    FORCE=""
+    if [ "${1:-}" = "--force" ]; then
+        FORCE="--force"
+    fi
+
+    if ! colima list 2>/dev/null | grep -q "^$INSTANCE "; then
+        echo "VM '$INSTANCE' does not exist."
+        exit 0
+    fi
+
+    echo "Stopping VM '$INSTANCE'..."
+    colima stop "$INSTANCE" $FORCE
+    echo "✅ VM stopped"
+}
+
+delete_vm() {
+    if ! colima list 2>/dev/null | grep -q "^$INSTANCE "; then
+        echo "VM '$INSTANCE' does not exist."
+        exit 0
+    fi
+
+    echo "Deleting VM '$INSTANCE'..."
+    colima delete "$INSTANCE" --force
+    echo "✅ VM deleted"
+}
+
+status_vm() {
+    echo "Colima VMs:"
+    echo ""
+    colima list
+    echo ""
+    
+    if colima list 2>/dev/null | grep -q "$INSTANCE.*Running"; then
+        echo "Docker context: colima-$INSTANCE"
+        echo ""
+        
+        # Check Nix installation
+        SSH_CONFIG=$(mktemp)
+        colima ssh-config "$INSTANCE" > "$SSH_CONFIG" 2>/dev/null || true
+        
+        if [ -s "$SSH_CONFIG" ]; then
+            NIX_VERSION=$(ssh -F "$SSH_CONFIG" "colima-$INSTANCE" '. ~/.nix-profile/etc/profile.d/nix.sh 2>/dev/null && nix --version 2>/dev/null' || echo "not installed")
+            echo "Nix version: $NIX_VERSION"
+        fi
+        rm -f "$SSH_CONFIG"
+    fi
+}
+
+ssh_vm() {
+    if ! colima list 2>/dev/null | grep -q "$INSTANCE.*Running"; then
+        echo "❌ VM '$INSTANCE' is not running."
+        echo "   Use 'colima-vm start' to start it."
+        exit 1
+    fi
+
+    SSH_CONFIG=$(mktemp)
+    colima ssh-config "$INSTANCE" > "$SSH_CONFIG"
+    trap "rm -f $SSH_CONFIG" EXIT
+
+    echo "Connecting to $INSTANCE..."
+    ssh -F "$SSH_CONFIG" "colima-$INSTANCE"
+}
+
+# Main
+case "${1:-}" in
+    create)
+        create_vm
+        ;;
+    start)
+        start_vm
+        ;;
+    stop)
+        shift
+        stop_vm "${1:-}"
+        ;;
+    delete)
+        delete_vm
+        ;;
+    status)
+        status_vm
+        ;;
+    ssh)
+        ssh_vm
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac

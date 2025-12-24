@@ -1,0 +1,53 @@
+# .github/workflows/update-nixpkgs.yml
+name: Update Nixpkgs
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9am UTC
+  workflow_dispatch:
+
+jobs:
+  update-flake:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v24
+        with:
+          nix_path: nixpkgs=channel:nixos-24.11
+
+      - name: Update flake.lock
+        working-directory: infra
+        run: nix flake update
+
+      - name: Check for changes
+        id: changes
+        working-directory: infra
+        run: |
+          if git diff --quiet flake.lock; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore(infra): update nixpkgs flake.lock'
+          title: 'chore(infra): weekly nixpkgs update'
+          body: |
+            Automated weekly update of nixpkgs via `nix flake update`.
+
+            ## Review Checklist
+            - [ ] CI passes
+            - [ ] No unexpected package changes
+            - [ ] Security scan passes
+          branch: chore/update-nixpkgs
+          delete-branch: true
