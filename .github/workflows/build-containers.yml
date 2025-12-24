@@ -5,9 +5,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'infra/flake.nix'
-      - 'infra/flake.lock'
-      - 'infra/overlays/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'overlays/**'
   workflow_dispatch:
 
 env:
@@ -56,7 +56,7 @@ jobs:
 
       - name: Build ${{ matrix.image }} image with Nix
         run: |
-          nix build ./infra#${{ matrix.image }} --out-link result
+          nix build .#${{ matrix.image }} --out-link result
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
@@ -86,14 +86,14 @@ jobs:
             *node*)
               echo "Running Node.js environment tests..."
               docker run --rm \
-                -v "${{ github.workspace }}/infra/tests:/tests:ro" \
+                -v "${{ github.workspace }}/tests:/tests:ro" \
                 "$IMAGE" \
                 bash /tests/test-node-environment.sh
               ;;
             *python*)
               echo "Running Python environment tests..."
               docker run --rm \
-                -v "${{ github.workspace }}/infra/tests:/tests:ro" \
+                -v "${{ github.workspace }}/tests:/tests:ro" \
                 "$IMAGE" \
                 bash /tests/test-python-environment.sh 2>/dev/null \
                 || echo "::warning::Python tests not implemented yet"

@@ -12,9 +12,9 @@ on:
     branches: [main]
   pull_request:
     paths:
-      - 'infra/flake.nix'
-      - 'infra/flake.lock'
-      - 'infra/overlays/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'overlays/**'
   workflow_dispatch:
 
 env:
@@ -41,7 +41,6 @@ jobs:
         run: nix profile install nixpkgs#vulnix
 
       - name: Run vulnix scan
-        working-directory: infra
         run: |
           echo "Scanning Python devShell..."
           nix build .#devShells.x86_64-linux.python --no-link -o python-shell
@@ -53,7 +52,6 @@ jobs:
         continue-on-error: true
 
       - name: Check for Critical/High CVEs
-        working-directory: infra
         run: |
           echo "Checking for Critical/High severity CVEs..."
           echo "::warning::Review vulnix output above for Critical/High CVEs"
@@ -93,7 +91,7 @@ jobs:
         if: env.USE_LOCAL_BUILD == 'true'
         id: build-local
         run: |
-          nix build ./infra#${{ matrix.image }} --out-link result
+          nix build .#${{ matrix.image }} --out-link result
           IMAGE_NAME="$(bash .github/scripts/docker-load-image-ref.sh result | tail -n 1)"
           echo "image_ref=${IMAGE_NAME}" >> $GITHUB_OUTPUT
 
@@ -180,7 +178,7 @@ jobs:
         if: env.USE_LOCAL_BUILD == 'true'
         id: build-local
         run: |
-          nix build ./infra#${{ matrix.image }} --out-link result
+          nix build .#${{ matrix.image }} --out-link result
           IMAGE_NAME="$(bash .github/scripts/docker-load-image-ref.sh result | tail -n 1)"
           echo "image_ref=${IMAGE_NAME}" >> $GITHUB_OUTPUT
 
@@ -261,7 +259,7 @@ jobs:
         if: env.USE_LOCAL_BUILD == 'true'
         id: build-local
         run: |
-          nix build ./infra#${{ matrix.image }} --out-link result
+          nix build .#${{ matrix.image }} --out-link result
           IMAGE_NAME="$(bash .github/scripts/docker-load-image-ref.sh result | tail -n 1)"
           echo "image_ref=${IMAGE_NAME}" >> $GITHUB_OUTPUT
 

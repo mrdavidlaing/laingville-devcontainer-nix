@@ -1,4 +1,4 @@
-# infra/flake.nix
+# flake.nix
 {
   description = "Nix container infrastructure for laingville";
 

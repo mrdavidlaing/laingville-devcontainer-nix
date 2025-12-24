@@ -3,7 +3,7 @@
   description = "Python project using laingville infrastructure";
 
   inputs = {
-    infra.url = "github:mrdavidlaing/laingville?dir=infra";
+    infra.url = "github:mrdavidlaing/laingville-devcontainer-nix";
     nixpkgs.follows = "infra/nixpkgs";  # Critical for layer sharing!
   };
 

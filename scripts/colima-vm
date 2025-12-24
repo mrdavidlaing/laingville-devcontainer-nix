@@ -106,10 +106,10 @@ INSTALL_NIX
     echo "=============================================="
     echo ""
     echo "Build containers with:"
-    echo "  ./infra/scripts/build-in-colima laingville-devcontainer local"
+    echo "  ./scripts/build-in-colima laingville-devcontainer local"
     echo ""
     echo "SSH into VM with:"
-    echo "  ./infra/scripts/colima-vm ssh"
+    echo "  ./scripts/colima-vm ssh"
 }
 
 start_vm() {

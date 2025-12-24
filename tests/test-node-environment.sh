@@ -7,7 +7,7 @@
 # Usage:
 #   docker run --rm <image> /path/to/test-node-environment.sh
 #   # Or mount and run:
-#   docker run --rm -v $(pwd)/infra/tests:/tests <image> /tests/test-node-environment.sh
+#   docker run --rm -v $(pwd)/tests:/tests <image> /tests/test-node-environment.sh
 
 set -euo pipefail
 

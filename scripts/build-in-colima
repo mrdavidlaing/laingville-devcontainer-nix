@@ -147,8 +147,8 @@ fi
 
 cd "$REPO_ROOT"
 
-echo "Running: nix build ./infra#packages.aarch64-linux.$PACKAGE"
-nix build "./infra#packages.aarch64-linux.$PACKAGE" --out-link /tmp/nix-build-result
+echo "Running: nix build .#packages.aarch64-linux.$PACKAGE"
+nix build ".#packages.aarch64-linux.$PACKAGE" --out-link /tmp/nix-build-result
 
 echo ""
 echo "Build complete:"

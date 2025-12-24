@@ -1,4 +1,4 @@
-# infra/overlays/default.nix
+# overlays/default.nix
 final: prev:
 let
   cvePatches = import ./cve-patches.nix final prev;
