@@ -78,19 +78,19 @@
           ];
 
           # Language: Node
-          # Uses nodejs_22_patched with npm 11.6.4 to fix glob CVE-2025-64756
+          # CVE patches disabled - using unpatched nodejs_22 to measure baseline CVE count
+          # Original: nodejs_22_patched with npm 11.6.4 to fix glob CVE-2025-64756
           node = with pkgs; [
-            nodejs_22_patched  # Node.js 22 LTS with patched npm
+            nodejs_22  # Node.js 22 LTS (unpatched - CVE testing)
           ];
-          # nodeDev: Uses patched nodePackages.* rebuilt with nodejs_22_patched.
-          # The overlay rebuilds nodePackages with npm 11.6.4 (glob 13.0.0, fixed),
-          # ensuring they're CVE-free while keeping the convenience of nixpkgs packages.
+          # nodeDev: CVE patches disabled - using unpatched nodePackages to measure baseline
+          # Original: patched nodePackages rebuilt with nodejs_22_patched (npm 11.6.4, glob 13.0.0)
           nodeDev = with pkgs; [
             bun                                    # Fast JavaScript runtime/bundler
-            nodePackages.typescript                # TypeScript compiler (patched)
-            nodePackages.typescript-language-server  # TypeScript language server (patched)
-            nodePackages.prettier                  # Code formatter (patched)
-            nodePackages.eslint                    # JavaScript linter (patched)
+            nodePackages.typescript                # TypeScript compiler (unpatched - CVE testing)
+            nodePackages.typescript-language-server  # TypeScript language server (unpatched)
+            nodePackages.prettier                  # Code formatter (unpatched)
+            nodePackages.eslint                    # JavaScript linter (unpatched)
           ];
 
           # Language: Go
