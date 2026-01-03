@@ -78,19 +78,15 @@
           ];
 
           # Language: Node
-          # CVE patches disabled - using unpatched nodejs_22 to measure baseline CVE count
-          # Original: nodejs_22_patched with npm 11.6.4 to fix glob CVE-2025-64756
           node = with pkgs; [
-            nodejs_22  # Node.js 22 LTS (unpatched - CVE testing)
+            nodejs_22  # Node.js 22 LTS
           ];
-          # nodeDev: CVE patches disabled - using unpatched nodePackages to measure baseline
-          # Original: patched nodePackages rebuilt with nodejs_22_patched (npm 11.6.4, glob 13.0.0)
           nodeDev = with pkgs; [
             bun                                    # Fast JavaScript runtime/bundler
-            nodePackages.typescript                # TypeScript compiler (unpatched - CVE testing)
-            nodePackages.typescript-language-server  # TypeScript language server (unpatched)
-            nodePackages.prettier                  # Code formatter (unpatched)
-            nodePackages.eslint                    # JavaScript linter (unpatched)
+            nodePackages.typescript                # TypeScript compiler
+            nodePackages.typescript-language-server  # TypeScript language server
+            nodePackages.prettier                  # Code formatter
+            nodePackages.eslint                    # JavaScript linter
           ];
 
           # Language: Go
